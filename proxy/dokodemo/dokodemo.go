@@ -2,6 +2,7 @@ package dokodemo
 
 import (
 	"context"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -56,6 +57,9 @@ func (d *DokodemoDoor) Init(config *Config, pm policy.Manager, sockopt *session.
 
 // Network implements proxy.Inbound.
 func (d *DokodemoDoor) Network() []net.Network {
+	if slices.Contains(d.config.Networks, net.Network_TCP) {
+		return append(d.config.Networks, net.Network_UNIX)
+	}
 	return d.config.Networks
 }
 
@@ -68,6 +72,10 @@ func (d *DokodemoDoor) policy() policy.Session {
 // Process implements proxy.Inbound.
 func (d *DokodemoDoor) Process(ctx context.Context, network net.Network, conn stat.Connection, dispatcher routing.Dispatcher) error {
 	errors.LogDebug(ctx, "processing connection from: ", conn.RemoteAddr())
+	// forward to TCP if from UNIX
+	if network == net.Network_UNIX {
+		network = net.Network_TCP
+	}
 	dest := net.Destination{
 		Network: network,
 		Address: d.address,
@@ -111,7 +119,8 @@ func (d *DokodemoDoor) Process(ctx context.Context, network net.Network, conn st
 				destinationOverridden = true
 			}
 		}
-		if tlsConn, ok := conn.(tls.Interface); ok && !destinationOverridden {
+		iConn := stat.TryUnwrapStatsConn(conn)
+		if tlsConn, ok := iConn.(tls.Interface); ok && !destinationOverridden {
 			if serverName := tlsConn.HandshakeContextServerName(ctx); serverName != "" {
 				dest.Address = net.DomainAddress(serverName)
 				destinationOverridden = true
